@@ -10,14 +10,18 @@ public class SharedMemory : IDisposable
 {
     private const int WriteFieldOffset = 0;
     private const int ReadFieldOffset = 4;
+    private readonly Notifier _notifier;
     private SafeFileHandle _fileHandle;
+    private int _wid;
 
     private SharedMemory(string name, int size, bool closeOnDispose, bool needPopulate)
     {
         Name = name;
         Size = size;
+        _notifier = new Notifier();
         OpenSharedMemory(closeOnDispose);
         MapMemory(needPopulate);
+        InitNotifier();
         BytesRead = 0;
         BytesWritten = 0;
     }
@@ -95,7 +99,33 @@ public class SharedMemory : IDisposable
             MemUnmap((nint)MemoryHandle.Pointer, (ulong)Size);
         }
 
+        _notifier.Dispose();
+
         GC.SuppressFinalize(this);
+    }
+
+    private void InitNotifier()
+    {
+        var buffer = new byte[128];
+        var pid = Environment.ProcessId;
+        var fdsPath = $"/proc/{pid}/fd/";
+        unsafe
+        {
+            fixed (byte* ptr = buffer)
+            {
+                var readLength = ReadLink(fdsPath + _fileHandle.DangerousGetHandle().ToInt32(), ptr,
+                    buffer.Length);
+                var pathName = Marshal.PtrToStringAnsi((nint)ptr, readLength);
+                _wid = _notifier.Register(pathName, NotifyMask.Modify);
+            }
+        }
+    }
+
+    protected void WaitNotify()
+    {
+        while (true)
+            if (_notifier.ReadEvents().Any(e => e.Wfd == _wid))
+                break;
     }
 
     public static SharedMemory Create(string name, long size)
@@ -158,7 +188,7 @@ public class SharedMemory : IDisposable
             var ptr = Unsafe.AsPointer(ref value);
             var size = Marshal.SizeOf<T>();
             var span = new Span<byte>(ptr, size);
-            InternalSpan.Slice(0, size).CopyTo(span);
+            InternalSpan[..size].CopyTo(span);
             BytesRead += size;
             return value;
         }
