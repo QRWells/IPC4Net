@@ -1,4 +1,4 @@
-﻿namespace QRWells.IPC4Net;
+﻿namespace QRWells.IPC4Net.Events;
 
 public class FileEvent
 {

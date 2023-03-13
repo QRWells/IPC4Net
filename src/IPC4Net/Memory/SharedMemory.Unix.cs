@@ -2,32 +2,41 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
-using static QRWells.IPC4Net.LibC;
+using static QRWells.IPC4Net.Unix.LibC;
 
-namespace QRWells.IPC4Net;
+namespace QRWells.IPC4Net.Memory;
 
-public class SharedMemory : IDisposable
+public sealed class SharedMemory : IDisposable
 {
     private const int WriteFieldOffset = 0;
     private const int ReadFieldOffset = 4;
+    private readonly bool _needPopulate;
     private readonly Notifier _notifier;
-    private SafeFileHandle _fileHandle;
-    private int _wid;
+    private int _bytesRead;
 
-    private SharedMemory(string name, int size, bool closeOnDispose, bool needPopulate)
+    private int _bytesWritten;
+    private SafeFileHandle _fileHandle;
+
+    private SharedMemoryStream? _readStream;
+    private SharedMemoryStream? _readWriteStream;
+    private int _wid;
+    private SharedMemoryStream? _writeStream;
+
+    public SharedMemory(string name, int size, bool closeOnDispose, bool needPopulate)
     {
         Name = name;
         Size = size;
         _notifier = new Notifier();
         OpenSharedMemory(closeOnDispose);
-        MapMemory(needPopulate);
+        MapMemory();
         InitNotifier();
         BytesRead = 0;
         BytesWritten = 0;
+        _needPopulate = needPopulate;
     }
 
     public string Name { get; }
-    public int Size { get; }
+    public int Size { get; private set; }
     public MemoryHandle MemoryHandle { get; private set; }
     public unsafe void* Pointer => MemoryHandle.Pointer;
 
@@ -37,7 +46,11 @@ public class SharedMemory : IDisposable
         {
             unsafe
             {
-                return Marshal.ReadInt32((nint)MemoryHandle.Pointer, WriteFieldOffset);
+                var newBytesWritten = Marshal.ReadInt32((nint)MemoryHandle.Pointer, WriteFieldOffset);
+                if (newBytesWritten == _bytesWritten) return newBytesWritten;
+                OnWriteModified?.Invoke(this, newBytesWritten - _bytesWritten);
+                _bytesWritten = newBytesWritten;
+                return newBytesWritten;
             }
         }
 
@@ -56,9 +69,14 @@ public class SharedMemory : IDisposable
         {
             unsafe
             {
-                return Marshal.ReadInt32((nint)MemoryHandle.Pointer, ReadFieldOffset);
+                var newBytesRead = Marshal.ReadInt32((nint)MemoryHandle.Pointer, ReadFieldOffset);
+                if (newBytesRead == _bytesRead) return newBytesRead;
+                OnReadModified?.Invoke(this, newBytesRead - _bytesRead);
+                _bytesRead = newBytesRead;
+                return newBytesRead;
             }
         }
+
         private set
         {
             unsafe
@@ -90,18 +108,22 @@ public class SharedMemory : IDisposable
         }
     }
 
+    public SharedMemoryStream ReadStream => _readStream ??= new SharedMemoryStream(this);
+    public SharedMemoryStream WriteStream => _writeStream ??= new SharedMemoryStream(this, FileAccess.Write);
+
+    public SharedMemoryStream ReadWriteStream =>
+        _readWriteStream ??= new SharedMemoryStream(this, FileAccess.ReadWrite);
+
     public void Dispose()
     {
-        Close((int)_fileHandle.DangerousGetHandle());
-        SharedMemoryUnlink(Name);
+        _ = Close((int)_fileHandle.DangerousGetHandle());
+        _ = SharedMemoryUnlink(Name);
         unsafe
         {
-            MemUnmap((nint)MemoryHandle.Pointer, (ulong)Size);
+            _ = MemUnmap((nint)MemoryHandle.Pointer, (ulong)Size);
         }
 
         _notifier.Dispose();
-
-        GC.SuppressFinalize(this);
     }
 
     private void InitNotifier()
@@ -121,21 +143,14 @@ public class SharedMemory : IDisposable
         }
     }
 
-    protected void WaitNotify()
+    public event EventHandler<int>? OnWriteModified;
+    public event EventHandler<int>? OnReadModified;
+
+    public void WaitNotify()
     {
         while (true)
             if (_notifier.ReadEvents().Any(e => e.Wfd == _wid))
                 break;
-    }
-
-    public static SharedMemory Create(string name, long size)
-    {
-        return new SharedMemory(name, (int)size, true, true);
-    }
-
-    public static SharedMemory Open(string name, long size)
-    {
-        return new SharedMemory(name, (int)size, false, true);
     }
 
     private void OpenSharedMemory(bool closeOnDispose)
@@ -151,15 +166,44 @@ public class SharedMemory : IDisposable
         if (res == -1) throw new Exception($"Failed to open shared memory with {Marshal.GetLastWin32Error()}");
     }
 
-    private void MapMemory(bool needPopulate)
+    private void MapMemory()
     {
-        var populateFlag = needPopulate ? MemoryFlags.Populate : 0;
+        var populateFlag = _needPopulate ? MemoryFlags.Populate : 0;
         var memoryAddress = MemoryMap(0, (ulong)Size, (int)(MemoryProtection.Write | MemoryProtection.Read),
             (int)(MemoryFlags.Shared | populateFlag | MemoryFlags.Locked), (int)_fileHandle.DangerousGetHandle(), 0);
         unsafe
         {
             MemoryHandle = new MemoryHandle((void*)memoryAddress);
         }
+    }
+
+    public unsafe bool TryResize(int size)
+    {
+        if (size <= Size) return false;
+
+        var oldHandle = MemoryHandle;
+        var oldSize = Size;
+        var res = SharedMemoryTruncate((int)_fileHandle.DangerousGetHandle(), size);
+        if (res == -1) throw new Exception($"Failed to open shared memory with {Marshal.GetLastWin32Error()}");
+        var populateFlag = _needPopulate ? MemoryFlags.Populate : 0;
+        var memoryAddress = MemoryMap(0, (ulong)size, (int)(MemoryProtection.Write | MemoryProtection.Read),
+            (int)(MemoryFlags.Shared | populateFlag | MemoryFlags.Locked), (int)_fileHandle.DangerousGetHandle(), 0);
+        lock (this)
+        {
+            if (oldHandle.Pointer != MemoryHandle.Pointer) oldHandle = default;
+
+            MemoryHandle = new MemoryHandle((void*)memoryAddress);
+            Size = size;
+        }
+
+        if (oldHandle.Pointer != default) _ = MemUnmap((nint)oldHandle.Pointer, (ulong)oldSize);
+
+        // reset streams
+        _readStream = null;
+        _writeStream = null;
+        _readWriteStream = null;
+
+        return true;
     }
 
     public void Write<T>(T value) where T : unmanaged
@@ -174,10 +218,10 @@ public class SharedMemory : IDisposable
         }
     }
 
-    public void Write(ReadOnlySequence<byte> sequence)
+    public void Write(ReadOnlySpan<byte> sequence)
     {
         sequence.CopyTo(InternalSpan);
-        BytesWritten += (int)sequence.Length;
+        BytesWritten += sequence.Length;
     }
 
     public T Read<T>() where T : unmanaged
@@ -192,5 +236,10 @@ public class SharedMemory : IDisposable
             BytesRead += size;
             return value;
         }
+    }
+
+    internal void ReadContent(Span<byte> sequence)
+    {
+        InternalSpan[..sequence.Length].CopyTo(sequence);
     }
 }

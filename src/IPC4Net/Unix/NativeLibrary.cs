@@ -1,6 +1,6 @@
 ﻿using System.Runtime.InteropServices;
 
-namespace QRWells.IPC4Net;
+namespace QRWells.IPC4Net.Unix;
 
 public class LibC
 {
@@ -76,49 +76,51 @@ public class LibC
         CloseOnExec = 0x80000
     }
 
-    [DllImport("libc.so.6", EntryPoint = "shm_open", SetLastError = true, CharSet = CharSet.Ansi,
+    private const string LibraryName = "libc.so.6";
+
+    [DllImport(LibraryName, EntryPoint = "shm_open", SetLastError = true, CharSet = CharSet.Ansi,
         CallingConvention = CallingConvention.Cdecl)]
     public static extern int SharedMemoryOpen(string name, int oflag, int mode);
 
-    [DllImport("libc.so.6", EntryPoint = "shm_unlink", SetLastError = true, CharSet = CharSet.Ansi,
+    [DllImport(LibraryName, EntryPoint = "shm_unlink", SetLastError = true, CharSet = CharSet.Ansi,
         CallingConvention = CallingConvention.Cdecl)]
     public static extern int SharedMemoryUnlink(string name);
 
-    [DllImport("libc.so.6", EntryPoint = "ftruncate", SetLastError = true, CallingConvention = CallingConvention.Cdecl)]
+    [DllImport(LibraryName, EntryPoint = "ftruncate", SetLastError = true, CallingConvention = CallingConvention.Cdecl)]
     public static extern int SharedMemoryTruncate(int fd, int length);
 
-    [DllImport("libc.so.6", EntryPoint = "mmap", SetLastError = true, CallingConvention = CallingConvention.Cdecl)]
+    [DllImport(LibraryName, EntryPoint = "mmap", SetLastError = true, CallingConvention = CallingConvention.Cdecl)]
     public static extern nint MemoryMap(nint addr, ulong length, int prot, int flags, int fd, long offset);
 
-    [DllImport("libc.so.6", EntryPoint = "munmap", SetLastError = true)]
+    [DllImport(LibraryName, EntryPoint = "munmap", SetLastError = true)]
     public static extern int MemUnmap(nint addr, ulong length);
 
-    [DllImport("libc.so.6", EntryPoint = "open", CharSet = CharSet.Ansi)]
+    [DllImport(LibraryName, EntryPoint = "open", CharSet = CharSet.Ansi)]
     public static extern int Open(string path, int flags, int mode);
 
-    [DllImport("libc.so.6", EntryPoint = "close")]
+    [DllImport(LibraryName, EntryPoint = "close")]
     public static extern int Close(int fd);
 
-    [DllImport("libc.so.6", EntryPoint = "readlink", SetLastError = true, CharSet = CharSet.Ansi,
+    [DllImport(LibraryName, EntryPoint = "readlink", SetLastError = true, CharSet = CharSet.Ansi,
         CallingConvention = CallingConvention.Cdecl)]
     public static extern unsafe int ReadLink(string path, byte* buffer, int bufferSize);
 
-    [DllImport("libc.so.6", EntryPoint = "inotify_init", SetLastError = true)]
+    [DllImport(LibraryName, EntryPoint = "inotify_init", SetLastError = true)]
     public static extern int InotifyInit();
 
-    [DllImport("libc.so.6", EntryPoint = "inotify_add_watch", SetLastError = true, CharSet = CharSet.Ansi)]
+    [DllImport(LibraryName, EntryPoint = "inotify_add_watch", SetLastError = true, CharSet = CharSet.Ansi)]
     public static extern int InotifyAddWatch(int fd, string path, uint mask);
 
-    [DllImport("libc.so.6", EntryPoint = "inotify_rm_watch", SetLastError = true)]
+    [DllImport(LibraryName, EntryPoint = "inotify_rm_watch", SetLastError = true)]
     public static extern int InotifyRemoveWatch(int fd, int wd);
 
-    [DllImport("libc.so.6", EntryPoint = "read", SetLastError = true)]
+    [DllImport(LibraryName, EntryPoint = "read", SetLastError = true)]
     public static extern unsafe int Read(int fd, byte* buffer, int count);
 
-    [DllImport("libc.so.6", EntryPoint = "write", SetLastError = true)]
+    [DllImport(LibraryName, EntryPoint = "write", SetLastError = true)]
     public static extern unsafe int Write(int fd, byte* buffer, int count);
 
-    [DllImport("libc.so.6", EntryPoint = "fcntl", SetLastError = true)]
+    [DllImport(LibraryName, EntryPoint = "fcntl", SetLastError = true)]
     public static extern int Fcntl(int fd, int cmd, int arg);
 
     [StructLayout(LayoutKind.Sequential)]

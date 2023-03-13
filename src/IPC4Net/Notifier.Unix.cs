@@ -1,5 +1,7 @@
 ﻿using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
+using QRWells.IPC4Net.Events;
+using QRWells.IPC4Net.Unix;
 
 namespace QRWells.IPC4Net;
 
